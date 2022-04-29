@@ -1,51 +1,55 @@
-const Blog = require('../models/Blog');
-const User = require('../models/User');
-const schedule = require('node-schedule');
-const cache = require('../../utils/Cache');
+const Blog = require('../models/Blog')
+const User = require('../models/User')
+const handleSchedule = require('node-schedule')
+const createError = require('http-errors')
+const Comment = require('../models/Comment')
 
 class BlogController {
   // @route POST /new-post
   // @desc Post new blog
   // @access Private
-  async postNewBlog(req, res) {
+  async postNewBlog(req, res, next) {
     try {
+      const { schedule } = req.body
+
       const blog = await Blog.create({
         ...req.body,
         postedBy: req._id,
-      });
+      })
 
-      const isScheduleBlog = req.body.schedule;
-      if (isScheduleBlog) {
-        schedule.scheduleJob(
-          req.body.schedule,
+      const { _id } = blog
+
+      if (schedule) {
+        handleSchedule.scheduleJob(
+          schedule,
           async () =>
             await Blog.updateOne(
-              { _id: blog._id },
+              { _id },
               {
                 schedule: null,
               }
             )
-        );
+        )
       }
 
-      return res.json({
+      return res.status(200).json({
         success: true,
         message: 'Post blog successfully!',
         blog,
-      });
+      })
     } catch (error) {
-      console.log(error.message);
-      return res.json({
+      console.error(error.message)
+      return res.status(500).json({
         success: false,
         message: 'Post blog failed!',
-      });
+      })
     }
   }
 
   // @route GET /blog
   // @desc Get all blog
   // @access Public
-  async getAllBlog(req, res) {
+  async getAllBlog(req, res, next) {
     try {
       const allBlog = await Blog.find({
         schedule: null,
@@ -53,230 +57,247 @@ class BlogController {
         isPosted: true,
       })
         .populate('postedBy')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
 
-      return res.json(allBlog);
+      return res.status(200).json(allBlog)
     } catch (error) {
-      console.log(error.message);
-      return res.json({
+      console.error(error.message)
+      return res.status(500).json({
         success: false,
         message: 'Get blog failed!',
-      });
+      })
     }
   }
 
-  // @route GET /blog/:slug || /blog/edit-blog/:slug
-  // @desc Get blog by slug
+  // @route GET /blog/:_id || /blog/edit-blog/:_id
+  // @desc Get blog by id
   // @access Public
-  async getBlog(req, res) {
+  async getBlog(req, res, next) {
     try {
+      const { _id } = req.params
+
       const blogData = await Promise.all([
         Blog.findOne({
-          slug: req.params.slug,
+          _id,
           schedule: null,
           isPosted: true,
-        })
-          .populate('postedBy')
-          .populate('comments.postedBy'),
-        Blog.find({ isPopular: true, isPosted: true }).populate(
-          'postedBy',
-          '_id fullName bio photoURL'
-        ),
-      ]);
+        }).populate('postedBy'),
+        Blog.find({ isPopular: true, isPosted: true }).populate('postedBy'),
+      ])
 
-      return res.json({
+      return res.status(200).json({
         blogSlug: blogData[0],
         blogHighlight: blogData[1],
-      });
+      })
     } catch (error) {
-      console.log(error.message);
-      return res.json({
-        success: false,
-        message: 'Get blog failed!',
-      });
+      console.error(error.message)
+      next(createError.InternalServerError())
     }
   }
 
   // @route GET /blog/tag/:tag
   // @desc Get blog by tag
   // @access Public
-  async getBlogTag(req, res) {
+  async getBlogTag(req, res, next) {
     try {
+      const { tag } = req.params
+
       const blogTagData = await Blog.find({
         schedule: null,
         isVerified: true,
         isPosted: true,
-        tags: req.params.tag,
+        tags: tag,
       })
         .populate('postedBy')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
 
-      return res.json(blogTagData);
+      return res.status(200).json(blogTagData)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      next(createError.InternalServerError())
     }
   }
 
-  // @route PUT /blog/edit-blog/:slug
+  // @route GET /blog/edit-blog/:_id
+  // @desc Get edit blog
+  // @access Private
+  async getEditBlog(req, res, next) {
+    try {
+      const { _id } = req.params
+
+      const blogEditData = await Blog.findById({ _id })
+
+      return res.json(blogEditData)
+    } catch (error) {
+      console.log(error)
+      next(createError.InternalServerError())
+    }
+  }
+
+  // @route PUT /blog/edit-blog/:_id
   // @desc Edit blog
   // @access Private
-  async editBlog(req, res) {
+  async editBlog(req, res, next) {
     try {
+      const { _id } = req.params
+      const { title, content } = req.body
+
       await Blog.updateOne(
-        { slug: req.params.slug, postedBy: req._id },
+        { _id },
         {
           $set: {
-            title: req.body.title,
-            content: req.body.content,
+            title,
+            content,
           },
         }
-      );
+      )
 
-      return res.json({
+      return res.status(200).json({
         success: true,
         message: 'Edit blog successfully!',
-      });
+      })
     } catch (error) {
-      console.log(error);
-      return res.json({
+      console.log(error)
+      return res.status(500).json({
         success: false,
         message: 'Edit blog failed!',
-      });
+      })
+    }
+  }
+
+  // @route DELETE /blog/delete-blog
+  // @desc Delete blog
+  // @access Private
+  async deleteBlog(req, res, next) {
+    try {
+      const { _id } = req
+      const { blogId } = req.params
+
+      await Blog.delete({ _id: blogId })
+
+      const blog = await Blog.find({ postedBy: _id })
+
+      return res.json(blog)
+    } catch (error) {
+      console.log(error.message)
+      next(createError.InternalServerError())
     }
   }
 
   // @route GET /blog/same-author/:id
   // @desc Get bog same author
   // @access Public
-  async getBlogSameAuthor(req, res) {
+  async getBlogSameAuthor(req, res, next) {
     try {
+      const { authorId, blogId } = req.params
+
       const blogSameAuthor = await Blog.find({
-        postedBy: req.params.authorId,
-        _id: { $ne: req.params.blogId },
+        postedBy: authorId,
+        _id: { $ne: blogId },
         schedule: null,
         isPosted: true,
-      }).select('slug titleDisplay');
+      }).select('titleDisplay')
 
-      return res.json(blogSameAuthor);
+      return res.status(200).json(blogSameAuthor)
     } catch (error) {
-      console.log(error.message);
-      return res.json({
+      console.error(error.message)
+      return res.status(500).json({
         success: false,
         message: 'Get blog failed!',
-      });
+      })
     }
   }
 
-  // @route PUT /blog/like
+  // @route PATCH /blog/like/:blogId
   // @desc Like blog
   // @access Private
-  async like(req, res) {
+  async like(req, res, next) {
     try {
-      const liked = await Blog.where('_id')
-        .equals(req.body.blogId)
-        .select('likes');
+      const { _id } = req
+      const { blogId } = req.params
 
-      const isLikedBlog = liked[0].likes.includes(req._id);
-      if (isLikedBlog) {
-        const likes = await Blog.findByIdAndUpdate(
-          req.body.blogId,
-          {
-            $pull: { likes: req._id },
-          },
-          { new: true }
-        ).select('likes slug postedBy');
-
-        return res.json(likes);
-      }
       const likes = await Blog.findByIdAndUpdate(
-        req.body.blogId,
+        blogId,
         {
-          $push: { likes: { $each: [req._id], $position: 0 } },
+          $push: { likes: _id },
         },
         { new: true }
-      ).select('likes slug postedBy');
+      ).select('likes')
 
-      return res.json(likes);
+      return res.status(200).json(likes)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      next(createError.InternalServerError())
     }
   }
 
-  // @route PUT /comment
-  // @desc Comment blog
+  // @route PATCH /blog/unlike/:blogId
+  // @desc Unlike blog
   // @access Private
-  async comment(req, res) {
+  async unlike(req, res, next) {
     try {
-      const commentData = {
-        content: req.body.content,
-        postedBy: req._id,
-        isCode: req.body.isCode,
-      };
+      const { _id } = req
+      const { blogId } = req.params
 
-      const comments = await Blog.findOneAndUpdate(
+      const likes = await Blog.findByIdAndUpdate(
+        blogId,
         {
-          _id: req.body.blogId,
+          $pull: { likes: _id },
         },
-        {
-          $push: { comments: { $each: [commentData], $position: 0 } },
-        },
-        {
-          new: true,
-        }
-      )
-        .select('comments')
-        .populate('comments.postedBy', '_id fullName photoURL');
+        { new: true }
+      ).select('likes')
 
-      console.log(commentData, req.body.blogId, comments);
-
-      return res.json(comments);
+      return res.status(200).json(likes)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      next(createError.InternalServerError())
     }
   }
 
   // @route GET /get-reply
   // @desc Get reply comment
   // @access Private
-  async getReplyComment(req, res) {
+  async getReplyComment(req, res, next) {
     try {
+      const { blogId, commentId } = req.params
+
+      console.log(blogId, commentId)
+
       const replyComment = await Blog.findOne({
-        $and: [
-          { _id: req.body.blogId },
-          { 'comments._id': req.body.commentId },
-        ],
+        $and: [{ _id: blogId }, { 'comments._id': commentId }],
       })
         .select('comments.replies comments._id')
-        .populate('comments.replies.postedBy', '_id fullName photoURL');
+        .populate('comments.replies.postedBy', '_id fullName photoURL')
 
-      console.log(replyComment);
-      return res.json(replyComment);
+      return res.status(200).json(replyComment)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      next(createError.InternalServerError())
     }
   }
 
   // @route PUT /reply
   // @desc Reply comment
   // @access Private
-  async replyComment(req, res) {
+  async replyComment(req, res, next) {
     try {
-      const commentData = {
-        content: req.body.content,
-        postedBy: req._id,
-        isCode: req.body.isCode,
-      };
+      const { _id } = req
+      const { blogId, commentId } = req.body
 
       const comments = await Blog.findOneAndUpdate(
         {
-          $and: [
-            { _id: req.body.blogId },
-            { 'comments._id': req.body.commentId },
-          ],
+          $and: [{ _id: blogId }, { 'comments._id': commentId }],
         },
         {
           $push: {
-            'comments.$.replies': { $each: [commentData] },
+            'comments.$.replies': {
+              $each: [
+                {
+                  ...req.body,
+                  postedBy: _id,
+                },
+              ],
+            },
           },
         },
         {
@@ -284,31 +305,34 @@ class BlogController {
         }
       )
         .select('comments.replies comments._id')
-        .populate('comments.replies.postedBy', '_id fullName photoURL');
+        .populate('comments.replies.postedBy', '_id fullName photoURL')
 
-      console.log(comments);
-
-      return res.json(comments);
+      return res.status(200).json(comments)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      return res.status(500).json({
+        success: false,
+        message: 'Reply error',
+      })
     }
   }
 
   // @route PUT /comment/react
   // @desc React comment
   // @access Private
-  async reactComment(req, res) {
+  async reactComment(req, res, next) {
     try {
-      const reactData = {
-        reactedBy: req._id,
-        emoji: req.body.emoji,
-      };
+      const { _id } = req
+      const { commentId, emoji } = req.body
 
       const comments = await Blog.findOneAndUpdate(
-        { 'comments._id': req.body.commentId },
+        { 'comments._id': commentId },
         {
           $push: {
-            'comments.$.reacts': reactData,
+            'comments.$.reacts': {
+              emoji,
+              reactedBy: _id,
+            },
           },
         },
         {
@@ -317,88 +341,72 @@ class BlogController {
       )
         .select('comments')
         .populate('comments.postedBy', '_id fullName photoURL')
-        .populate('comments.reacts.reactedBy', '_id fullName photoURL');
+        .populate('comments.reacts.reactedBy', '_id fullName photoURL')
 
-      return res.json(comments);
+      return res.status(200).json(comments)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      return res.status(500).json({
+        success: false,
+        message: 'React failed!',
+      })
     }
   }
 
   // @route PUT blog/comment/edit
   // @desc Edit comment
   // @access Private
-  async editComment(req, res) {
+  async editComment(req, res, next) {
     try {
+      const { commentId, conetnt, isCode } = req.body
+
       const comments = await Blog.findOneAndUpdate(
-        { 'comments._id': req.body.commentId },
+        { 'comments._id': commentId },
         {
           $set: {
-            'comments.$.content': req.body.content,
-            'comments.$.isCode': req.body.isCode,
+            'comments.$.content': content,
+            'comments.$.isCode': isCode,
           },
         },
         { new: true }
       )
         .select('comments')
-        .populate('comments.postedBy', '_id fullName photoURL');
+        .populate('comments.postedBy', '_id fullName photoURL')
 
-      console.log(comments);
-
-      return res.json(comments);
+      return res.status(200).json(comments)
     } catch (error) {
-      console.log(error.message);
+      console.error(error.message)
+      return res.status(500).json({
+        success: false,
+        message: 'Edit comment failed!',
+      })
     }
   }
 
   // @route PUT blog/comment/delete
   // @desc Delete comment
   // @access Private
-  async deleteComment(req, res) {
-    console.log(req.body.commentId);
+  async deleteComment(req, res, next) {
+    const { commentId } = req.body
 
     try {
       const comments = await Blog.findOneAndUpdate(
-        { 'comments._id': req.body.commentId },
-        { $pull: { comments: { _id: req.body.commentId } } },
+        { 'comments._id': commentId },
+        { $pull: { comments: { _id: commentId } } },
         { new: true }
       )
         .select('comments')
-        .populate('comments.postedBy', '_id fullName photoURL');
+        .populate('comments.postedBy', '_id fullName photoURL')
 
-      console.log('Comments: ', comments);
-
-      return res.json(comments);
+      return res.status(200).json(comments)
     } catch (error) {
-      console.log(error.message);
-    }
-  }
-
-  // @route POST /blog/add-popular
-  // @desc Add blog to popular blog
-  // @access Private
-  async addPopular(req, res) {
-    try {
-      const blog = await Blog.findOneAndUpdate(
-        { _id: req.body.blogId },
-        {
-          $set: { isPopular: !req.body.isPopular },
-        }
-      ).sort({ createdAt: -1 });
-
-      return res.json({
-        success: true,
-        message: 'Create Successfully!',
-        blog,
-      });
-    } catch (error) {
-      console.log(error.message);
-      return res.json({
+      console.error(error.message)
+      return res.status(500).json({
         success: false,
-        message: 'Create Failed!',
-      });
+        message: 'Delete comment failed!',
+      })
     }
   }
 }
 
-module.exports = new BlogController();
+module.exports = new BlogController()
